@@ -1,216 +1,292 @@
-import { useState, useRef } from "react";
+import React, { useState, useRef } from "react";
 import * as XLSX from "xlsx";
-import { saveAs } from "file-saver";
-import html2canvas from "html2canvas";
-import './index.css';
 
 export default function ControlVehiculos() {
-  const [registros, setRegistros] = useState(() => {
-    const saved = localStorage.getItem("vehiculos");
+
+  // --- Fecha local automática ---
+  const obtenerFechaLocal = () => {
+    const ahora = new Date();
+    const pad = n => n.toString().padStart(2,"0");
+    return `${ahora.getFullYear()}-${pad(ahora.getMonth()+1)}-${pad(ahora.getDate())}T${pad(ahora.getHours())}:${pad(ahora.getMinutes())}`;
+  }
+
+  // --- Formulario inicial ---
+  const [form, setForm] = useState({
+    fecha: obtenerFechaLocal(),
+    vehiculo: "",
+    placa: "",
+    usuario: "",
+    kilometrajeInicio: "",
+    combustibleInicio: "",
+    kilometrajeFin: "",
+    combustibleFin: "",
+    observaciones: "",
+    fotoVehiculo: null,
+    fotoConductor: null,
+    otrasFotos: []
+  });
+
+  // --- Registros persistentes ---
+  const [registros, setRegistros] = useState(()=>{
+    const saved = localStorage.getItem("registrosVehiculos");
     return saved ? JSON.parse(saved) : [];
   });
 
-  const [form, setForm] = useState({
-    vehiculo:"", placa:"", usuario:"", combustible:"",
-    kilometrajeInicio:"", kilometrajeFin:"", estadoVehiculo:"", comentarios:"",
-    fotos:[], fecha:new Date().toISOString().slice(0,16),
-    checklist:{ llantas:"ok",tanque:"ok",luces:"ok",gato:"ok",otros:"ok",
-                frenos:"ok",aceite:"ok",parabrisas:"ok",limpieza:"ok" },
-    firmaRecepcion:"", firmaEntrega:"", fotoRecepcion:"", fotoEntrega:""
-  });
-
-  const [editIndex, setEditIndex] = useState(null);
-
-  const canvasRecepcionRef = useRef(null);
-  const canvasEntregaRef = useRef(null);
-  const dibujando = useRef(false);
-
-  const [firmaVisible, setFirmaVisible] = useState({tipo:"", visible:false});
-  const checklistRef = useRef(null);
-
-  // --- Cambio de inputs ---
-  const handleChange = (e) => {
-    const { name, value, type, files } = e.target;
-    if(type==="file"){
-      const imgs = Array.from(files).map(f => URL.createObjectURL(f));
-      if(name==="fotos") setForm({...form, fotos:[...form.fotos,...imgs]});
-      else setForm({...form, [name]:imgs[0]});
-    } else setForm({...form, [name]:value});
+  // --- Checklist ---
+  const checklistBase = {
+    Luces:true, Direccionales:true, Frenos:true, Claxon:true,
+    Espejos:true, Llantas:true, Refacción:true, Gato:true,
+    Herramienta:true, Limpieza:true, Documentos:true, Seguro:true
   };
-
-  const handleChecklist = (e) => {
-    const { name, value } = e.target;
-    setForm({...form, checklist:{...form.checklist,[name]:value}});
-  };
+  const [checklist,setChecklist] = useState(checklistBase);
 
   // --- Firmas ---
-  const iniciarFirma = (e,tipo) => { e.preventDefault(); dibujando.current=true; dibujarFirma(e,tipo); };
-  const terminarFirma = (e,tipo) => { e&&e.preventDefault(); dibujando.current=false; const ref = tipo==="recepcion"?canvasRecepcionRef:canvasEntregaRef; ref.current.getContext("2d").beginPath(); };
-  const dibujarFirma = (e,tipo) => {
-    e.preventDefault();
-    if(!dibujando.current) return;
-    const ref = tipo==="recepcion"?canvasRecepcionRef:canvasEntregaRef;
-    const canvas = ref.current; const ctx = canvas.getContext("2d");
-    const rect = canvas.getBoundingClientRect();
-    const x = (e.touches?e.touches[0].clientX:e.clientX)-rect.left;
-    const y = (e.touches?e.touches[0].clientY:e.clientY)-rect.top;
-    ctx.lineWidth=2; ctx.lineCap="round"; ctx.lineTo(x,y); ctx.stroke(); ctx.beginPath(); ctx.moveTo(x,y);
-  };
+  const [firmaConductor,setFirmaConductor] = useState(null);
+  const [firmaSupervisor,setFirmaSupervisor] = useState(null);
+  const [mostrarFirmaConductor,setMostrarFirmaConductor] = useState(false);
+  const [mostrarFirmaSupervisor,setMostrarFirmaSupervisor] = useState(false);
+  const canvasConductorRef = useRef(null);
+  const canvasSupervisorRef = useRef(null);
+  const drawing = useRef(false);
 
-  const abrirFirma = (tipo) => setFirmaVisible({tipo, visible:true});
-  const borrarFirma = (tipo) => { const ref = tipo==="recepcion"?canvasRecepcionRef:canvasEntregaRef; ref.current.getContext("2d").clearRect(0,0,ref.current.width,ref.current.height); };
-  const aceptarFirma = (tipo) => {
-    const ref = tipo==="recepcion"?canvasRecepcionRef:canvasEntregaRef;
-    const img = ref.current.toDataURL();
+  // --- Editar ---
+  const [editIndex,setEditIndex] = useState(null);
+
+  // --- Manejo inputs ---
+  const handleChange = e=>{
+    const {name,value,files} = e.target;
+    if(name==="fotoVehiculo" && files.length>0){
+      const reader = new FileReader();
+      reader.onload = ()=>setForm(f=>({...f,fotoVehiculo:reader.result}));
+      reader.readAsDataURL(files[0]);
+    } else if(name==="fotoConductor" && files.length>0){
+      const reader = new FileReader();
+      reader.onload = ()=>setForm(f=>({...f,fotoConductor:reader.result}));
+      reader.readAsDataURL(files[0]);
+    } else if(name==="otrasFotos" && files.length>0){
+      const fotosArray = Array.from(files);
+      fotosArray.forEach(file=>{
+        const reader = new FileReader();
+        reader.onload = ()=>setForm(f=>({...f,otrasFotos:[...f.otrasFotos, reader.result]}));
+        reader.readAsDataURL(file);
+      });
+    } else {
+      setForm(f=>({...f,[name]:value}));
+    }
+  }
+
+  const toggleChecklist = item=>setChecklist({...checklist,[item]:!checklist[item]});
+
+  // --- Dibujo firmas ---
+  const getPos = (e,canvas)=>{
+    const rect = canvas.getBoundingClientRect();
+    let x,y;
+    if(e.touches){
+      x = e.touches[0].clientX - rect.left;
+      y = e.touches[0].clientY - rect.top;
+    } else {
+      x = e.clientX - rect.left;
+      y = e.clientY - rect.top;
+    }
+    return {x,y};
+  }
+
+  const comenzarDibujo = (e,tipo)=>{
+    e.preventDefault();
+    drawing.current=true;
+    const canvas = tipo==="conductor"?canvasConductorRef.current:canvasSupervisorRef.current;
+    const ctx = canvas.getContext("2d");
+    const pos = getPos(e,canvas);
+    ctx.beginPath(); ctx.moveTo(pos.x,pos.y);
+  }
+
+  const dibujar = (e,tipo)=>{
+    e.preventDefault();
+    if(!drawing.current) return;
+    const canvas = tipo==="conductor"?canvasConductorRef.current:canvasSupervisorRef.current;
+    const ctx = canvas.getContext("2d");
+    const pos = getPos(e,canvas);
+    ctx.lineTo(pos.x,pos.y); ctx.stroke();
+  }
+
+  const finalizarDibujo = e=>{
+    e?.preventDefault(); drawing.current=false;
+  }
+
+  const limpiarCanvas = tipo=>{
+    const canvas = tipo==="conductor"?canvasConductorRef.current:canvasSupervisorRef.current;
+    const ctx = canvas.getContext("2d");
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    ctx.lineWidth=2; ctx.lineCap="round"; ctx.strokeStyle="#000";
+  }
+
+  const guardarFirma = tipo=>{
+    const canvas = tipo==="conductor"?canvasConductorRef.current:canvasSupervisorRef.current;
+    const img = canvas.toDataURL("image/png");
     if(!img || img==="data:,"){ alert("Debe firmar antes de aceptar"); return; }
-    setForm({...form, [tipo==="recepcion"?"firmaRecepcion":"firmaEntrega"]:img});
-    setFirmaVisible({tipo:"", visible:false});
-  };
+    tipo==="conductor"?setFirmaConductor(img):setFirmaSupervisor(img);
+    tipo==="conductor"?setMostrarFirmaConductor(false):setMostrarFirmaSupervisor(false);
+  }
 
   // --- Guardar registro ---
-  const guardarRegistro = (e) => {
-    e.preventDefault();
-    if(!form.firmaRecepcion || !form.firmaEntrega){
-      alert("Ambas firmas son obligatorias"); return;
-    }
-    const nuevo = {...form, fecha:new Date(form.fecha).toLocaleString()};
-    if(editIndex!==null){
-      const nuevos = [...registros]; nuevos[editIndex]=nuevo; setRegistros(nuevos); setEditIndex(null);
-    } else setRegistros([...registros,nuevo]);
+  const guardarRegistro = ()=>{
+    if(!firmaConductor || !firmaSupervisor){ alert("Se requieren ambas firmas"); return; }
+    const registro = {...form,checklist,firmaConductor,firmaSupervisor,fechaRegistro:new Date().toLocaleString()};
+    let nuevosRegistros = editIndex!==null?[...registros]:[...registros,registro];
+    if(editIndex!==null){ nuevosRegistros[editIndex]=registro; setEditIndex(null);}
+    setRegistros(nuevosRegistros);
+    localStorage.setItem("registrosVehiculos",JSON.stringify(nuevosRegistros));
+    setForm({...form,fecha:obtenerFechaLocal(),vehiculo:"",placa:"",usuario:"",kilometrajeInicio:"",combustibleInicio:"",kilometrajeFin:"",combustibleFin:"",observaciones:"",fotoVehiculo:null,fotoConductor:null,otrasFotos:[]});
+    setChecklist(checklistBase); setFirmaConductor(null); setFirmaSupervisor(null);
+  }
 
-    setForm({ vehiculo:"", placa:"", usuario:"", combustible:"",
-      kilometrajeInicio:"", kilometrajeFin:"", estadoVehiculo:"", comentarios:"",
-      fotos:[], fecha:new Date().toISOString().slice(0,16),
-      checklist:{ llantas:"ok",tanque:"ok",luces:"ok",gato:"ok",otros:"ok",
-                  frenos:"ok",aceite:"ok",parabrisas:"ok",limpieza:"ok" },
-      firmaRecepcion:"", firmaEntrega:"", fotoRecepcion:"", fotoEntrega:""
-    });
+  const editarRegistro=i=>{
+    const r=registros[i];
+    setForm({...r}); 
+    setChecklist(r.checklist); 
+    setFirmaConductor(r.firmaConductor); 
+    setFirmaSupervisor(r.firmaSupervisor);
+    setEditIndex(i);
+  }
 
-    borrarFirma("recepcion"); borrarFirma("entrega");
-  };
+  const borrarRegistro=i=>{
+    if(!window.confirm("¿Borrar este registro?")) return;
+    const nuevosRegistros=registros.filter((_,idx)=>idx!==i);
+    setRegistros(nuevosRegistros);
+    localStorage.setItem("registrosVehiculos",JSON.stringify(nuevosRegistros));
+  }
 
-  // --- Borrar / Editar registros ---
-  const borrarRegistroIndividual = (i) => { if(window.confirm("¿Borrar este registro?")) setRegistros(registros.filter((_,idx)=>idx!==i)); };
-  const editarRegistro = (i) => { const r = registros[i]; setForm({...r, fecha:new Date(r.fecha).toISOString().slice(0,16)}); setEditIndex(i); };
-  const borrarTodosRegistros = () => { if(window.confirm("¿Borrar todos?")) setRegistros([]); };
-
-  // --- Exportar Excel ---
-  const exportarExcel = () => {
-    if(registros.length===0){ alert("No hay registros"); return; }
-    const datos = registros.map(r=>({
-      Fecha:r.fecha, Vehiculo:r.vehiculo, Placa:r.placa, Usuario:r.usuario, Combustible:r.combustible,
-      KilometrajeInicio:r.kilometrajeInicio, KilometrajeFin:r.kilometrajeFin, Estado:r.estadoVehiculo,
-      Comentarios:r.comentarios,
-      FotoRecepcion: r.fotoRecepcion ? "Sí" : "No",
-      FotoEntrega: r.fotoEntrega ? "Sí" : "No",
-      FirmaRecepcion:r.firmaRecepcion ? "Sí" : "No",
-      FirmaEntrega:r.firmaEntrega ? "Sí" : "No",
-      Llantas:r.checklist.llantas, Tanque:r.checklist.tanque, Luces:r.checklist.luces,
-      Gato:r.checklist.gato, Otros:r.checklist.otros, Frenos:r.checklist.frenos,
-      Aceite:r.checklist.aceite, Parabrisas:r.checklist.parabrisas, Limpieza:r.checklist.limpieza
+  const exportarExcel=()=>{
+    const data=registros.map((r,i)=>({
+      No:i+1, Fecha:r.fecha, Vehiculo:r.vehiculo, Placa:r.placa, Usuario:r.usuario,
+      KmInicio:r.kilometrajeInicio, CombustibleInicial:r.combustibleInicio,
+      KmFinal:r.kilometrajeFin, CombustibleFinal:r.combustibleFin,
+      FirmaConductor:r.firmaConductor?"Sí":"No", FirmaSupervisor:r.firmaSupervisor?"Sí":"No",
+      Observaciones:r.observaciones
     }));
-    const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.json_to_sheet(datos);
-    XLSX.utils.book_append_sheet(wb, ws, "Registros");
-    const archivo = XLSX.write(wb,{bookType:"xlsx", type:"array"});
-    saveAs(new Blob([archivo],{type:"application/octet-stream"}),"ControlVehicular.xlsx");
-  };
+    const ws=XLSX.utils.json_to_sheet(data);
+    const wb=XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb,ws,"Registros");
+    XLSX.writeFile(wb,"control_vehiculos.xlsx");
+  }
 
-  // --- Borrar foto individual ---
-  const borrarFotoIndividual = (name) => setForm({...form,[name]:""});
+  const colorTarjeta=r=>{
+    if(r.firmaConductor && r.firmaSupervisor) return "#d4edda";
+    if(r.firmaConductor) return "#fff3cd";
+    if(r.firmaSupervisor) return "#cce5ff";
+    return "#f8d7da";
+  }
 
   return (
     <div className="container">
-      <h1>Control Vehicular</h1>
-      <form onSubmit={guardarRegistro}>
-        <input name="vehiculo" placeholder="Vehículo" value={form.vehiculo} onChange={handleChange} required/>
-        <input name="placa" placeholder="Placa / Serie" value={form.placa} onChange={handleChange}/>
-        <input name="usuario" placeholder="Usuario" value={form.usuario} onChange={handleChange} required/>
-        <input name="kilometrajeInicio" placeholder="Km Inicial" value={form.kilometrajeInicio} onChange={handleChange}/>
-        <input name="kilometrajeFin" placeholder="Km Final" value={form.kilometrajeFin} onChange={handleChange}/>
-        <select name="combustible" value={form.combustible} onChange={handleChange} required>
-          <option value="">Combustible</option>
-          <option>Vacío</option><option>1/4</option><option>1/2</option><option>3/4</option><option>Lleno</option>
+      <h1>Control de Vehículos</h1>
+
+      <form>
+        <input type="datetime-local" name="fecha" value={form.fecha} onChange={handleChange} />
+        <input name="vehiculo" placeholder="Vehículo" value={form.vehiculo} onChange={handleChange} />
+        <input name="placa" placeholder="Placa" value={form.placa} onChange={handleChange} />
+        <input name="usuario" placeholder="Usuario" value={form.usuario} onChange={handleChange} />
+        <input name="kilometrajeInicio" placeholder="Km Inicial" value={form.kilometrajeInicio} onChange={handleChange} />
+        <select name="combustibleInicio" value={form.combustibleInicio} onChange={handleChange}>
+          <option value="">Combustible inicial</option><option>Vacío</option><option>1/4</option><option>1/2</option><option>3/4</option><option>Lleno</option>
         </select>
-        <input name="estadoVehiculo" placeholder="Estado / daños / refacción / gato" value={form.estadoVehiculo} onChange={handleChange}/>
-        <input type="datetime-local" name="fecha" value={form.fecha} onChange={handleChange}/>
+        <input name="kilometrajeFin" placeholder="Km Final" value={form.kilometrajeFin} onChange={handleChange} />
+        <select name="combustibleFin" value={form.combustibleFin} onChange={handleChange}>
+          <option value="">Combustible final</option><option>Vacío</option><option>1/4</option><option>1/2</option><option>3/4</option><option>Lleno</option>
+        </select>
+        <textarea name="observaciones" placeholder="Observaciones" value={form.observaciones} onChange={handleChange}/>
 
-        <label>Foto del vehículo <input type="file" name="fotos" accept="image/*" capture="environment" onChange={handleChange}/></label>
-        <label>Foto quien recibe <input type="file" name="fotoRecepcion" accept="image/*" capture="user" onChange={handleChange}/></label>
-        <label>Foto quien entrega <input type="file" name="fotoEntrega" accept="image/*" capture="user" onChange={handleChange}/></label>
+        <label>Foto Vehículo:</label>
+        <input type="file" accept="image/*" name="fotoVehiculo" onChange={handleChange} />
+        {form.fotoVehiculo && <img src={form.fotoVehiculo} width={200} style={{margin:"5px 0"}}/>}
 
-        <div className="fotos">
-          {form.fotos && <img src={form.fotos} alt="foto" width={60}/>}
-          {form.fotoRecepcion && <img src={form.fotoRecepcion} alt="recepcion" width={60}/>}
-          {form.fotoEntrega && <img src={form.fotoEntrega} alt="entrega" width={60}/>}
-        </div>
+        <label>Foto Conductor:</label>
+        <input type="file" accept="image/*" name="fotoConductor" onChange={handleChange} />
+        {form.fotoConductor && <img src={form.fotoConductor} width={150} style={{margin:"5px 0"}}/>}
 
-        <textarea name="comentarios" placeholder="Comentarios" value={form.comentarios} onChange={handleChange}/>
-
-        <div className="checklist" ref={checklistRef}>
-          <h3>Check-list de revisión</h3>
-          {Object.keys(form.checklist).map(item=>(
-            <label key={item}>
-              <span>{item.charAt(0).toUpperCase()+item.slice(1)}</span>
-              <span>
-                <select name={item} value={form.checklist[item]} onChange={handleChecklist}>
-                  <option value="ok">✅ Todo OK</option>
-                  <option value="mal">❌ Mal estado</option>
-                </select>
-              </span>
-            </label>
-          ))}
-        </div>
-
-        <div className="firmas">
-          <button type="button" className="firma" onClick={()=>abrirFirma("recepcion")}>Firmar recepción</button>
-          <button type="button" className="firma" onClick={()=>abrirFirma("entrega")}>Firmar entrega</button>
-
-          {firmaVisible.tipo && firmaVisible.visible && (
-            <div className="modal-firma">
-              <canvas ref={firmaVisible.tipo==="recepcion"?canvasRecepcionRef:canvasEntregaRef} width={400} height={150}
-                onMouseDown={(e)=>iniciarFirma(e,firmaVisible.tipo)}
-                onMouseMove={(e)=>dibujarFirma(e,firmaVisible.tipo)}
-                onMouseUp={(e)=>terminarFirma(e,firmaVisible.tipo)}
-                onMouseLeave={(e)=>terminarFirma(e,firmaVisible.tipo)}
-                onTouchStart={(e)=>iniciarFirma(e,firmaVisible.tipo)}
-                onTouchMove={(e)=>dibujarFirma(e,firmaVisible.tipo)}
-                onTouchEnd={(e)=>terminarFirma(e,firmaVisible.tipo)}
-              />
-              <button type="button" className="save" onClick={()=>aceptarFirma(firmaVisible.tipo)}>Aceptar</button>
-              <button type="button" className="delete" onClick={()=>borrarFirma(firmaVisible.tipo)}>Borrar</button>
-            </div>
-          )}
-        </div>
-
-        <div>
-          <button type="submit" className="save">Guardar</button>
-          <button type="button" className="export" onClick={()=>html2canvas(checklistRef.current).then(c=>window.open(c.toDataURL()))}>Generar imagen checklist</button>
-        </div>
+        <label>Otras Fotos:</label>
+        <input type="file" accept="image/*" name="otrasFotos" onChange={handleChange} multiple />
+        {form.otrasFotos && form.otrasFotos.map((f,j)=><img key={j} src={f} width={100} style={{marginRight:"5px"}}/>)}
       </form>
 
-      <div>
-        <button className="delete" onClick={borrarTodosRegistros}>Borrar todos</button>
-        <button className="export" onClick={exportarExcel}>Exportar Excel</button>
+      <h3>Checklist</h3>
+      <div className="checklist">{Object.keys(checklist).map(i=><label key={i}>{i}<input type="checkbox" checked={checklist[i]} onChange={()=>toggleChecklist(i)} /></label>)}</div>
+
+      <h3>Firmas</h3>
+      <div className="acciones">
+        <button className="btn btn-conductor" onClick={()=>setMostrarFirmaConductor(true)}>Firma Conductor</button>
+        <button className="btn btn-supervisor" onClick={()=>setMostrarFirmaSupervisor(true)}>Firma Supervisor</button>
       </div>
 
+      {/* Modal firma conductor */}
+      {mostrarFirmaConductor && (
+        <div className="modal-firma">
+          <h4>Firma del Conductor</h4>
+          <canvas
+            ref={canvasConductorRef}
+            width={400} 
+            height={150}
+            style={{width:"100%"}}
+            onMouseDown={(e)=>comenzarDibujo(e,"conductor")}
+            onMouseMove={(e)=>dibujar(e,"conductor")}
+            onMouseUp={finalizarDibujo}
+            onMouseLeave={finalizarDibujo}
+            onTouchStart={(e)=>comenzarDibujo(e,"conductor")}
+            onTouchMove={(e)=>dibujar(e,"conductor")}
+            onTouchEnd={finalizarDibujo}
+          />
+          <button className="btn btn-guardar" onClick={()=>guardarFirma("conductor")}>Guardar</button>
+          <button className="btn btn-cancelar" onClick={()=>setMostrarFirmaConductor(false)}>Cancelar</button>
+          <button className="btn btn-limpiar" onClick={()=>limpiarCanvas("conductor")}>Limpiar</button>
+        </div>
+      )}
+
+      {/* Modal firma supervisor */}
+      {mostrarFirmaSupervisor && (
+        <div className="modal-firma">
+          <h4>Firma del Supervisor</h4>
+          <canvas
+            ref={canvasSupervisorRef}
+            width={400} 
+            height={150}
+            style={{width:"100%"}}
+            onMouseDown={(e)=>comenzarDibujo(e,"supervisor")}
+            onMouseMove={(e)=>dibujar(e,"supervisor")}
+            onMouseUp={finalizarDibujo}
+            onMouseLeave={finalizarDibujo}
+            onTouchStart={(e)=>comenzarDibujo(e,"supervisor")}
+            onTouchMove={(e)=>dibujar(e,"supervisor")}
+            onTouchEnd={finalizarDibujo}
+          />
+          <button className="btn btn-guardar" onClick={()=>guardarFirma("supervisor")}>Guardar</button>
+          <button className="btn btn-cancelar" onClick={()=>setMostrarFirmaSupervisor(false)}>Cancelar</button>
+          <button className="btn btn-limpiar" onClick={()=>limpiarCanvas("supervisor")}>Limpiar</button>
+        </div>
+      )}
+
+      <div className="acciones">
+        <button className="btn btn-guardar" onClick={guardarRegistro}>Guardar registro</button>
+        <button className="btn btn-exportar" onClick={exportarExcel}>Exportar Excel</button>
+      </div>
+
+      <h3>Registros</h3>
       <div className="grid">
         {registros.map((r,i)=>(
-          <div key={i} className="card">
-            <p><strong>{r.fecha}</strong> — {r.vehiculo} ({r.placa})</p>
+          <div key={i} className="card" style={{backgroundColor:colorTarjeta(r)}}>
+            <p><strong>{r.fechaRegistro}</strong> — {r.vehiculo} ({r.placa})</p>
             <p>Usuario: {r.usuario}</p>
             <p>Kilometraje: {r.kilometrajeInicio} → {r.kilometrajeFin}</p>
-            <p>Combustible: {r.combustible}</p>
-            <p>Estado: {r.estadoVehiculo}</p>
-            {r.comentarios && <p>Comentarios: {r.comentarios}</p>}
-            {r.fotos && <img src={r.fotos} alt="foto" width={50}/>}
-            {r.fotoRecepcion && <img src={r.fotoRecepcion} alt="recepcion" width={50}/>}
-            {r.fotoEntrega && <img src={r.fotoEntrega} alt="entrega" width={50}/>}
-            {r.firmaRecepcion && <p>Firma recepción:<br/><img src={r.firmaRecepcion} width={150}/></p>}
-            {r.firmaEntrega && <p>Firma entrega:<br/><img src={r.firmaEntrega} width={150}/></p>}
-            <div>
-              <button className="edit" onClick={()=>editarRegistro(i)}>Editar</button>
-              <button className="delete" onClick={()=>borrarRegistroIndividual(i)}>Borrar</button>
+            <p>Combustible: {r.combustibleInicio} → {r.combustibleFin}</p>
+            <p>Observaciones: {r.observaciones}</p>
+            <p>Checklist: {Object.keys(r.checklist).filter(k=>r.checklist[k]).join(", ")}</p>
+            {r.fotoVehiculo && <p>Foto Vehículo:<br/><img src={r.fotoVehiculo} width={200}/></p>}
+            {r.fotoConductor && <p>Foto Conductor:<br/><img src={r.fotoConductor} width={150}/></p>}
+            {r.otrasFotos && r.otrasFotos.map((f,j)=><img key={j} src={f} width={100} style={{marginRight:"5px"}}/>)}
+            {r.firmaConductor && <p>Conductor:<br/><img src={r.firmaConductor} width={150}/></p>}
+            {r.firmaSupervisor && <p>Supervisor:<br/><img src={r.firmaSupervisor} width={150}/></p>}
+            <div className="acciones-registro">
+              <button className="btn btn-editar" onClick={()=>editarRegistro(i)}>Editar</button>
+              <button className="btn btn-borrar" onClick={()=>borrarRegistro(i)}>Borrar</button>
             </div>
           </div>
         ))}
