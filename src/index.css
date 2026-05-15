@@ -1,0 +1,20 @@
+.container { max-width: 950px; margin:auto; padding:10px; font-family:sans-serif; }
+form input, form select, form textarea{display:block; width:100%; margin:5px 0; padding:10px; font-size:16px;}
+.checklist label{display:inline-block;margin-right:10px;margin-bottom:5px; font-size:16px;}
+
+.acciones button, .acciones-registro button{
+  margin:5px; padding:12px 20px; border:none; color:white; cursor:pointer; border-radius:6px; font-size:16px;
+}
+.btn-conductor{background-color:#28a745;}
+.btn-supervisor{background-color:#007bff;}
+.btn-guardar{background-color:#17a2b8;}
+.btn-cancelar{background-color:#6c757d;}
+.btn-limpiar{background-color:#ffc107; color:black;}
+.btn-exportar{background-color:#6610f2;}
+.btn-editar{background-color:#20c997;}
+.btn-borrar{background-color:#dc3545;}
+
+.card{padding:15px; margin-bottom:10px; border-radius:10px; box-shadow:0 0 5px rgba(0,0,0,0.2); font-size:16px;}
+.acciones-registro button{margin-right:5px;}
+.modal-firma{margin:10px 0; padding:10px; border:2px solid #007bff; border-radius:10px; background-color:#f8f9fa;}
+canvas{border:1px solid #333; border-radius:5px; touch-action:none;}
